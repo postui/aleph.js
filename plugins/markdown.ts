@@ -9,8 +9,8 @@ export default (): LoaderPlugin => {
     type: 'loader',
     test: /\.(md|markdown)$/i,
     allowPage: true,
-    resolve: (url) => {
-      let pagePath = util.trimPrefix(url.replace(/\.(md|markdown)$/i, ''), '/pages')
+    resolve: (specifier) => {
+      let pagePath = util.trimPrefix(specifier.replace(/\.(md|markdown)$/i, ''), '/pages')
       let isIndex = pagePath.endsWith('/index')
       if (isIndex) {
         pagePath = util.trimSuffix(pagePath, '/index')
@@ -18,11 +18,11 @@ export default (): LoaderPlugin => {
           pagePath = '/'
         }
       }
-      return { url, pagePath, isIndex }
+      return { specifier, pagePath, isIndex }
     },
-    load: async ({ url }, app) => {
+    load: async ({ specifier }, app) => {
       const { framework } = app.config
-      const { content } = await app.fetch(url)
+      const { content } = await app.fetch(specifier)
       const { __content, ...meta } = safeLoadFront((new TextDecoder).decode(content))
       const html = marked.parse(__content)
       const props = {

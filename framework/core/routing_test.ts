@@ -21,7 +21,7 @@ Deno.test(`routing`, () => {
   routing.update(
     '/blog',
     '/pages/blog/index.tsx',
-    { isIndex: true }
+    true
   )
   routing.update(
     '/blog/[slug]',
@@ -30,7 +30,7 @@ Deno.test(`routing`, () => {
   routing.update(
     '/user',
     '/pages/user/index.tsx',
-    { isIndex: true }
+    true
   )
   routing.update(
     '/user/[...all]',
@@ -63,7 +63,7 @@ Deno.test(`routing`, () => {
   routing.update(
     '/',
     '/pages/index.tsx',
-    { isIndex: true }
+    true
   )
 
   assertEquals(routing.paths, [
@@ -84,7 +84,7 @@ Deno.test(`routing`, () => {
     assertEquals(router.locale, 'en')
     assertEquals(router.pathname, '/')
     assertEquals(router.routePath, '/')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/index.tsx'])
+    assertEquals(nestedModules, ['/pages/index.tsx'])
   }
 
   {
@@ -92,7 +92,7 @@ Deno.test(`routing`, () => {
     assertEquals(router.locale, 'zh-CN')
     assertEquals(router.pathname, '/')
     assertEquals(router.routePath, '/')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/index.tsx'])
+    assertEquals(nestedModules, ['/pages/index.tsx'])
   }
 
   {
@@ -100,7 +100,7 @@ Deno.test(`routing`, () => {
     assertEquals(router.locale, 'en')
     assertEquals(router.pathname, '/hello-world')
     assertEquals(router.routePath, '/hello-world')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/hello-world.tsx'])
+    assertEquals(nestedModules, ['/pages/hello-world.tsx'])
   }
 
   {
@@ -108,7 +108,7 @@ Deno.test(`routing`, () => {
     assertEquals(router.locale, 'zh-CN')
     assertEquals(router.pathname, '/hello-world')
     assertEquals(router.routePath, '/hello-world')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/hello-world.tsx'])
+    assertEquals(nestedModules, ['/pages/hello-world.tsx'])
   }
 
   {
@@ -116,7 +116,7 @@ Deno.test(`routing`, () => {
     assertEquals(router.locale, 'en')
     assertEquals(router.pathname, '/blog')
     assertEquals(router.routePath, '/blog')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/blog.tsx', '/pages/blog/index.tsx'])
+    assertEquals(nestedModules, ['/pages/blog.tsx', '/pages/blog/index.tsx'])
   }
 
   {
@@ -124,7 +124,7 @@ Deno.test(`routing`, () => {
     assertEquals(router.locale, 'zh-CN')
     assertEquals(router.pathname, '/blog')
     assertEquals(router.routePath, '/blog')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/blog.tsx', '/pages/blog/index.tsx'])
+    assertEquals(nestedModules, ['/pages/blog.tsx', '/pages/blog/index.tsx'])
   }
 
   {
@@ -132,14 +132,14 @@ Deno.test(`routing`, () => {
     assertEquals(router.pathname, '/blog/hello-world')
     assertEquals(router.routePath, '/blog/[slug]')
     assertEquals(router.params['slug'], 'hello-world')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/blog.tsx', '/pages/blog/[slug].tsx'])
+    assertEquals(nestedModules, ['/pages/blog.tsx', '/pages/blog/[slug].tsx'])
   }
 
   {
     const [router, nestedModules] = routing.createRouter({ pathname: '/user' })
     assertEquals(router.pathname, '/user')
     assertEquals(router.routePath, '/user')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/user.tsx', '/pages/user/index.tsx'])
+    assertEquals(nestedModules, ['/pages/user.tsx', '/pages/user/index.tsx'])
   }
 
   {
@@ -147,7 +147,7 @@ Deno.test(`routing`, () => {
     assertEquals(router.pathname, '/user')
     assertEquals(router.routePath, '/user')
     assertEquals(router.query.get('name'), 'aleph')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/user.tsx', '/pages/user/index.tsx'])
+    assertEquals(nestedModules, ['/pages/user.tsx', '/pages/user/index.tsx'])
   }
 
   {
@@ -155,7 +155,7 @@ Deno.test(`routing`, () => {
     assertEquals(router.pathname, '/user/projects')
     assertEquals(router.routePath, '/user/[...all]')
     assertEquals(router.params['all'], 'projects')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/user.tsx', '/pages/user/[...all].tsx'])
+    assertEquals(nestedModules, ['/pages/user.tsx', '/pages/user/[...all].tsx'])
   }
 
   {
@@ -163,7 +163,7 @@ Deno.test(`routing`, () => {
     assertEquals(router.pathname, '/user/settings/profile')
     assertEquals(router.routePath, '/user/[...all]')
     assertEquals(router.params['all'], 'settings/profile')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/user.tsx', '/pages/user/[...all].tsx'])
+    assertEquals(nestedModules, ['/pages/user.tsx', '/pages/user/[...all].tsx'])
   }
 
   {
@@ -171,13 +171,13 @@ Deno.test(`routing`, () => {
     assertEquals(router.pathname, '/user/settings/security')
     assertEquals(router.routePath, '/user/[...all]')
     assertEquals(router.params['all'], 'settings/security')
-    assertEquals(nestedModules.map(m => m.url), ['/pages/user.tsx', '/pages/user/[...all].tsx'])
+    assertEquals(nestedModules, ['/pages/user.tsx', '/pages/user/[...all].tsx'])
   }
 
   {
     const [router, nestedModules] = routing.createRouter({ pathname: '/null' })
     assertEquals(router.pathname, '/null')
     assertEquals(router.routePath, '')
-    assertEquals(nestedModules.map(m => m.url), [])
+    assertEquals(nestedModules, [])
   }
 })

@@ -1,6 +1,5 @@
-import { basename, dirname } from 'https://deno.land/std@0.96.0/path/mod.ts'
-import { moduleExts } from '../framework/core/module.ts'
-import { createBlankRouterURL, RouteModule } from '../framework/core/routing.ts'
+import { basename, dirname } from 'https://deno.land/std@0.99.0/path/mod.ts'
+import { createBlankRouterURL } from '../framework/core/routing.ts'
 import log from '../shared/log.ts'
 import util from '../shared/util.ts'
 import type { RouterURL } from '../types.ts'
@@ -16,7 +15,7 @@ export type SSROutput = {
   data: Record<string, SSRData> | null
 }
 
-/** The framework render result of SSR. */
+/** The render result of framework SSR. */
 export type FrameworkRenderResult = {
   head: string[]
   body: string
@@ -24,17 +23,17 @@ export type FrameworkRenderResult = {
   data: Record<string, SSRData> | null
 }
 
-/** The framework renderer for SSR. */
+/** The renderer of framework SSR. */
 export type FrameworkRenderer = {
   render(
     url: RouterURL,
     AppComponent: any,
-    nestedPageComponents: { url: string, Component?: any }[],
+    nestedPageComponents: { specifier: string, Component?: any }[],
     styles: Record<string, { css?: string, href?: string }>
   ): Promise<FrameworkRenderResult>
 }
 
-/** The renderer class for aleph server. */
+/** The renderer class for SSR. */
 export class Renderer {
   #app: Application
   #renderer: FrameworkRenderer
@@ -50,18 +49,7 @@ export class Renderer {
     this.#renderer = renderer
   }
 
-  private findModuleByName(name: string): Module | null {
-    for (const ext of moduleExts) {
-      const url = `/${name}.${ext}`
-      const mod = this.#app.getModule(url)
-      if (mod) {
-        return mod
-      }
-    }
-    return null
-  }
-
-  async useCache(
+  async cache(
     namespace: string,
     key: string,
     render: () => Promise<[string, Record<string, SSRData> | null]>
@@ -88,8 +76,9 @@ export class Renderer {
     }
     let [html, data] = await render()
     if (namespace !== '-') {
-      this.#app.getCodeInjects('ssr')?.forEach(transform => {
-        html = transform(key, html)
+      this.#app.getCodeInjects('ssr', key)?.forEach(transform => {
+        const ret = transform(key, html)
+        html = ret.code
       })
     }
     cache.set(key, { html, data })
@@ -105,27 +94,27 @@ export class Renderer {
   }
 
   /** render page base the given location. */
-  async renderPage(url: RouterURL, nestedModules: RouteModule[]): Promise<[string, Record<string, SSRData> | null]> {
+  async renderPage(url: RouterURL, nestedModules: string[]): Promise<[string, Record<string, SSRData> | null]> {
     const start = performance.now()
     const isDev = this.#app.isDev
     const state = { entryFile: '' }
-    const appModule = this.findModuleByName('app')
+    const appModule = this.#app.getModule('app')
     const { default: App } = appModule ? await this.#app.importModule(appModule) : {} as any
     const nestedPageComponents = await Promise.all(nestedModules
-      .filter(({ url }) => this.#app.getModule(url) !== null)
-      .map(async ({ url }) => {
-        const module = this.#app.getModule(url)!
+      .filter(specifier => this.#app.getModule(specifier) !== null)
+      .map(async specifier => {
+        const module = this.#app.getModule(specifier)!
         const { default: Component } = await this.#app.importModule(module)
-        state.entryFile = dirname(url) + '/' + basename(module.jsFile)
+        state.entryFile = dirname(specifier) + '/' + basename(module.jsFile)
         return {
-          url,
+          specifier,
           Component
         }
       })
     )
     const styles = await this.lookupStyleModules(...[
-      appModule ? appModule.url : [],
-      nestedModules.map(({ url }) => url)
+      appModule ? appModule.specifier : [],
+      nestedModules
     ].flat())
 
     // ensure working directory
@@ -139,7 +128,7 @@ export class Renderer {
     )
 
     if (isDev) {
-      log.info(`render '${url.pathname}' in ${Math.round(performance.now() - start)}ms`)
+      log.info(`render '${url.toString()}' in ${Math.round(performance.now() - start)}ms`)
     }
 
     return [
@@ -167,60 +156,18 @@ export class Renderer {
     ]
   }
 
-  /** render custom 404 page. */
-  async render404Page(url: RouterURL): Promise<string> {
-    const appModule = this.findModuleByName('app')
-    const e404Module = this.findModuleByName('404')
-    const { default: App } = appModule ? await this.#app.importModule(appModule) : {} as any
-    const { default: E404 } = e404Module ? await this.#app.importModule(e404Module) : {} as any
-    const styles = await this.lookupStyleModules(...[
-      appModule ? appModule.url : [],
-      e404Module ? e404Module.url : []
-    ].flat())
-    const { head, body, data, scripts } = await this.#renderer.render(
-      url,
-      App,
-      e404Module ? [{ url: e404Module.url, Component: E404 }] : [],
-      styles
-    )
-    return createHtml({
-      lang: url.locale,
-      head,
-      scripts: [
-        data ? {
-          id: 'ssr-data',
-          type: 'application/json',
-          innerText: JSON.stringify(data, undefined, this.#app.isDev ? 2 : 0),
-        } : '',
-        ...this.#app.getSSRHTMLScripts(),
-        ...scripts.map((script: Record<string, any>) => {
-          if (script.innerText && !this.#app.isDev) {
-            return { ...script, innerText: script.innerText }
-          }
-          return script
-        })
-      ],
-      body: `<div id="__aleph">${body}</div>`,
-      minify: !this.#app.isDev
-    })
-  }
-
-  /** render custom loading page for SPA mode. */
+  /** render the index page for SPA mode. */
   async renderSPAIndexPage(): Promise<string> {
     const { basePath, defaultLocale } = this.#app.config
-    const loadingModule = this.findModuleByName('loading')
+    const appModule = this.#app.getModule('app')
 
-    if (loadingModule) {
-      const { default: Loading } = await this.#app.importModule(loadingModule)
-      const styles = await this.lookupStyleModules(loadingModule.url)
-      const {
-        head,
-        body,
-        scripts
-      } = await this.#renderer.render(
+    if (appModule) {
+      const { default: App, Loading } = await this.#app.importModule(appModule)
+      const styles = await this.lookupStyleModules(appModule.specifier)
+      const { head, body, scripts } = await this.#renderer.render(
         createBlankRouterURL(basePath, defaultLocale),
-        undefined,
-        [{ url: loadingModule.url, Component: Loading }],
+        App,
+        [{ specifier: `${appModule.specifier}#Loading`, Component: Loading }],
         styles
       )
       return createHtml({
@@ -249,11 +196,11 @@ export class Renderer {
     })
   }
 
-  private async lookupStyleModules(...urls: string[]): Promise<Record<string, { css?: string, href?: string }>> {
+  private async lookupStyleModules(...specifiers: string[]): Promise<Record<string, { css?: string, href?: string }>> {
     const mods: Module[] = []
-    urls.forEach(url => {
-      this.#app.lookupDeps(url, ({ url }) => {
-        const mod = this.#app.getModule(url)
+    specifiers.forEach(specifier => {
+      this.#app.lookupDeps(specifier, ({ specifier }) => {
+        const mod = this.#app.getModule(specifier)
         if (mod && mod.isStyle) {
           mods.push({ ...mod, deps: [...mod.deps] })
         }
@@ -261,9 +208,9 @@ export class Renderer {
     })
     return (await Promise.all(mods.map(async module => {
       const { css, href } = await this.#app.importModule(module)
-      return { url: module.url, css, href }
-    }))).reduce((styles, { url, css, href }) => {
-      styles[url] = { css, href }
+      return { specifier: module.specifier, css, href }
+    }))).reduce((styles, { specifier, css, href }) => {
+      styles[specifier] = { css, href }
       return styles
     }, {} as Record<string, { css?: string, href?: string }>)
   }

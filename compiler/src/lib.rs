@@ -2,16 +2,17 @@
 extern crate lazy_static;
 
 mod error;
-mod fast_refresh;
+mod export_names;
 mod import_map;
 mod jsx;
-mod resolve;
 mod resolve_fold;
+mod resolver;
 mod source_type;
+mod strip_ssr;
 mod swc;
 
 use import_map::ImportHashMap;
-use resolve::{DependencyDescriptor, InlineStyle, ReactResolve, Resolver};
+use resolver::{DependencyDescriptor, InlineStyle, ReactOptions, Resolver};
 use serde::{Deserialize, Serialize};
 use source_type::SourceType;
 use std::collections::HashMap;
@@ -26,25 +27,31 @@ pub struct Options {
   pub import_map: ImportHashMap,
 
   #[serde(default)]
-  pub aleph_pkg_uri: String,
+  pub aleph_pkg_uri: Option<String>,
 
-  #[serde(default)]
-  pub react: Option<ReactResolve>,
+  #[serde(default = "default_working_dir")]
+  pub working_dir: String,
 
   #[serde(default)]
   pub swc_options: SWCOptions,
 
   #[serde(default)]
-  pub source_map: bool,
-
-  #[serde(default)]
-  pub is_dev: bool,
+  pub external_remote_deps: bool,
 
   #[serde(default)]
   pub bundle_mode: bool,
 
   #[serde(default)]
-  pub bundle_external: Vec<String>,
+  pub bundle_externals: Vec<String>,
+
+  #[serde(default)]
+  pub is_dev: bool,
+
+  #[serde(default)]
+  pub source_map: bool,
+
+  #[serde(default)]
+  pub react: Option<ReactOptions>,
 }
 
 #[derive(Deserialize)]
@@ -70,6 +77,10 @@ impl Default for SWCOptions {
   }
 }
 
+fn default_working_dir() -> String {
+  "/".into()
+}
+
 fn default_pragma() -> String {
   "React.createElement".into()
 }
@@ -82,20 +93,32 @@ fn default_pragma_frag() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct TransformOutput {
   pub code: String,
+
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub deps: Vec<DependencyDescriptor>,
+
   #[serde(skip_serializing_if = "HashMap::is_empty")]
   pub inline_styles: HashMap<String, InlineStyle>,
+
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub ssr_props_fn: Option<String>,
+
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub ssg_paths_fn: Option<bool>,
+
   #[serde(skip_serializing_if = "Vec::is_empty")]
-  pub use_deno_hooks: Vec<String>,
+  pub deno_hooks: Vec<String>,
+
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub star_exports: Vec<String>,
+
   #[serde(skip_serializing_if = "Option::is_none")]
   pub map: Option<String>,
 }
 
 #[wasm_bindgen(js_name = "parseExportNamesSync")]
 pub fn parse_export_names_sync(
-  url: &str,
+  specifier: &str,
   code: &str,
   options: JsValue,
 ) -> Result<JsValue, JsValue> {
@@ -105,13 +128,44 @@ pub fn parse_export_names_sync(
     .into_serde()
     .map_err(|err| format!("failed to parse options: {}", err))
     .unwrap();
-  let module = SWC::parse(url, code, Some(options.source_type)).expect("could not parse module");
+  let module =
+    SWC::parse(specifier, code, Some(options.source_type)).expect("could not parse module");
   let export_names = module.parse_export_names().unwrap();
+
   Ok(JsValue::from_serde(&export_names).unwrap())
 }
 
+#[wasm_bindgen(js_name = "stripSsrCodeSync")]
+pub fn strip_ssr_code(specifier: &str, code: &str, options: JsValue) -> Result<JsValue, JsValue> {
+  console_error_panic_hook::set_once();
+
+  let options: Options = options
+    .into_serde()
+    .map_err(|err| format!("failed to parse options: {}", err))
+    .unwrap();
+  let module = SWC::parse(specifier, code, Some(options.swc_options.source_type))
+    .expect("could not parse the module");
+  let (code, map) = module
+    .strip_ssr_code(options.source_map)
+    .expect("could not strip ssr code");
+
+  Ok(
+    JsValue::from_serde(&TransformOutput {
+      code,
+      deps: vec![],
+      inline_styles: HashMap::new(),
+      star_exports: vec![],
+      ssr_props_fn: None,
+      ssg_paths_fn: None,
+      deno_hooks: vec![],
+      map,
+    })
+    .unwrap(),
+  )
+}
+
 #[wasm_bindgen(js_name = "transformSync")]
-pub fn transform_sync(url: &str, code: &str, options: JsValue) -> Result<JsValue, JsValue> {
+pub fn transform_sync(specifier: &str, code: &str, options: JsValue) -> Result<JsValue, JsValue> {
   console_error_panic_hook::set_once();
 
   let options: Options = options
@@ -119,18 +173,17 @@ pub fn transform_sync(url: &str, code: &str, options: JsValue) -> Result<JsValue
     .map_err(|err| format!("failed to parse options: {}", err))
     .unwrap();
   let resolver = Rc::new(RefCell::new(Resolver::new(
-    url,
+    specifier,
+    options.working_dir.as_str(),
     options.import_map,
+    options.external_remote_deps,
     options.bundle_mode,
-    options.bundle_external,
-    match options.aleph_pkg_uri.as_str() {
-      "" => None,
-      _ => Some(options.aleph_pkg_uri),
-    },
+    options.bundle_externals,
+    options.aleph_pkg_uri,
     options.react,
   )));
-  let module =
-    SWC::parse(url, code, Some(options.swc_options.source_type)).expect("could not parse module");
+  let module = SWC::parse(specifier, code, Some(options.swc_options.source_type))
+    .expect("could not parse the module");
   let (code, map) = module
     .transform(
       resolver.clone(),
@@ -141,15 +194,18 @@ pub fn transform_sync(url: &str, code: &str, options: JsValue) -> Result<JsValue
         is_dev: options.is_dev,
       },
     )
-    .expect("could not transform module");
-  let r = resolver.borrow_mut();
+    .expect("could not transform the module");
+  let r = resolver.borrow();
+
   Ok(
     JsValue::from_serde(&TransformOutput {
       code,
-      deps: r.dep_graph.clone(),
+      deps: r.deps.clone(),
       inline_styles: r.inline_styles.clone(),
       star_exports: r.star_exports.clone(),
-      use_deno_hooks: r.use_deno_hooks.clone(),
+      ssr_props_fn: r.ssr_props_fn.clone(),
+      ssg_paths_fn: r.ssg_paths_fn.clone(),
+      deno_hooks: r.deno_hooks.clone(),
       map,
     })
     .unwrap(),

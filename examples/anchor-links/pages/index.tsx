@@ -1,4 +1,3 @@
-import { useDeno } from 'framework/react'
 import React from 'react'
 
 export default function Home() {
@@ -9,6 +8,7 @@ export default function Home() {
       </head>
       <div>
         <h1>Home page</h1>
+        <p>Welcome to use Aleph.js</p>
       </div>
     </div>
   )

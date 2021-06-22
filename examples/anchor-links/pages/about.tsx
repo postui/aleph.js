@@ -1,8 +1,9 @@
-import { useDeno } from "framework/react"
-import React from "react"
+import { useDeno } from 'framework/react'
+import React from 'react'
 
 export default function About() {
   const version = useDeno(() => Deno.version.deno)
+
   return (
     <div>
       <head>

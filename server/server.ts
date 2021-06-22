@@ -1,7 +1,8 @@
-import { createHash } from 'https://deno.land/std@0.96.0/hash/mod.ts'
-import { dirname, join } from 'https://deno.land/std@0.96.0/path/mod.ts'
-import { acceptWebSocket, isWebSocketCloseEvent } from 'https://deno.land/std@0.96.0/ws/mod.ts'
-import { trimModuleExt } from '../framework/core/module.ts'
+import { createHash } from 'https://deno.land/std@0.99.0/hash/mod.ts'
+import { join } from 'https://deno.land/std@0.99.0/path/mod.ts'
+import { acceptWebSocket, isWebSocketCloseEvent } from 'https://deno.land/std@0.99.0/ws/mod.ts'
+import { SourceType, stripSsrCode } from '../compiler/mod.ts'
+import { builtinModuleExts, trimBuiltinModuleExts } from '../framework/core/module.ts'
 import { rewriteURL } from '../framework/core/routing.ts'
 import { existsFile } from '../shared/fs.ts'
 import log from '../shared/log.ts'
@@ -10,7 +11,6 @@ import { VERSION } from '../version.ts'
 import type { ServerRequest } from '../types.ts'
 import { Request } from './api.ts'
 import { Application } from './app.ts'
-import { getAlephPkgUri, toRelativePath, toLocalPath } from './helper.ts'
 import { getContentType } from './mime.ts'
 
 /** The Aleph server class. */
@@ -39,6 +39,8 @@ export class Server {
     for (const key in headers) {
       req.setHeader(key, headers[key])
     }
+
+    // in dev mode, we use `Last-Modified` and `ETag` header to control cache
     if (app.isDev) {
       req.setHeader('Cache-Control', 'max-age=0')
     }
@@ -50,23 +52,25 @@ export class Server {
         const socket = await acceptWebSocket({ conn, bufReader, bufWriter, headers })
         const watcher = app.createFSWatcher()
         watcher.on('add', (mod: any) => socket.send(JSON.stringify({ ...mod, type: 'add' })))
-        watcher.on('remove', (url: string) => {
-          watcher.removeAllListeners('modify-' + url)
-          socket.send(JSON.stringify({ type: 'remove', url }))
+        watcher.on('remove', (specifier: string) => {
+          watcher.removeAllListeners('modify-' + specifier)
+          socket.send(JSON.stringify({ type: 'remove', specifier }))
         })
+        log.debug('hmr connected')
         for await (const e of socket) {
           if (util.isNEString(e)) {
             try {
               const data = JSON.parse(e)
-              if (data.type === 'hotAccept' && util.isNEString(data.url)) {
-                const mod = app.getModule(data.url)
+              if (data.type === 'hotAccept' && util.isNEString(data.specifier)) {
+                const mod = app.getModule(data.specifier)
                 if (mod) {
-                  watcher.on('modify-' + mod.url, (hash: string) => {
+                  log.debug('hmr on', mod.specifier)
+                  watcher.on(`modify-${mod.specifier}`, (data) => {
                     socket.send(JSON.stringify({
+                      ...data,
                       type: 'update',
-                      url: mod.url,
-                      updateUrl: util.cleanPath(`${basePath}/_aleph/${trimModuleExt(mod.url)}.js`),
-                      hash,
+                      specifier: mod.specifier,
+                      updateUrl: util.cleanPath(`${basePath}/_aleph/${trimBuiltinModuleExts(mod.specifier)}.js`),
                     }))
                   })
                 }
@@ -77,6 +81,7 @@ export class Server {
           }
         }
         app.removeFSWatcher(watcher)
+        log.debug('hmr closed')
         return
       }
 
@@ -94,16 +99,25 @@ export class Server {
         }
 
         const relPath = util.trimPrefix(pathname, '/_aleph')
-
         if (relPath == '/main.js') {
-          req.send(app.getMainJS(false), 'application/javascript; charset=utf-8')
+          req.send(app.createMainJS(false), 'application/javascript; charset=utf-8')
           return
         }
 
         if (relPath.endsWith('.js')) {
-          const module = app.findModule(({ jsFile }) => jsFile === relPath)
+          let module = app.findModule(({ jsFile }) => jsFile === relPath)
+          if (!module && app.isDev) {
+            for (const ext of [...builtinModuleExts.map(ext => `.${ext}`), '']) {
+              const sepcifier = util.trimSuffix(relPath, '.js') + ext
+              if (await existsFile(join(app.workingDir, sepcifier))) {
+                module = await app.compile(sepcifier)
+                break
+              }
+            }
+          }
           if (module) {
-            const content = await app.getModuleJSCode(module)
+            const { specifier } = module
+            const content = await app.getModuleJS(module)
             if (content) {
               const etag = createHash('md5').update(VERSION).update(module.hash || module.sourceHash).toString()
               if (etag === r.headers.get('If-None-Match')) {
@@ -112,24 +126,30 @@ export class Server {
               }
 
               req.setHeader('ETag', etag)
-              if (app.isHMRable(module.url)) {
+              if (app.isDev && app.isHMRable(specifier)) {
                 let code = new TextDecoder().decode(content)
-                app.getCodeInjects('hmr')?.forEach(transform => {
-                  code = transform(module.url, code)
+                if (module.denoHooks?.length || module.ssrPropsFn || module.ssgPathsFn) {
+                  if ('csrCode' in module) {
+                    code = (module as any).csrCode
+                  } else {
+                    const { code: csrCode } = await stripSsrCode(specifier, code, { sourceMap: true, swcOptions: { sourceType: SourceType.JS } })
+                    Object.assign(module, { csrCode })
+                    // todo: merge source map
+                    code = csrCode
+                  }
+                }
+                app.getCodeInjects('hmr', specifier)?.forEach(transform => {
+                  const ret = transform(specifier, code)
+                  code = ret.code
                 })
-                const hmrModuleImportUrl = toRelativePath(
-                  dirname(toLocalPath(module.url)),
-                  toLocalPath(`${getAlephPkgUri()}/framework/core/hmr.js`)
-                )
-                const lines = [
-                  `import { createHotContext } from ${JSON.stringify(hmrModuleImportUrl)};`,
-                  `import.meta.hot = createHotContext(${JSON.stringify(module.url)});`,
+                code = [
+                  `import.meta.hot = window.$createHotContext(${JSON.stringify(specifier)});`,
                   '',
                   code,
                   '',
                   'import.meta.hot.accept();'
-                ]
-                req.send(lines.join('\n'), 'application/javascript; charset=utf-8')
+                ].join('\n')
+                req.send(code, 'application/javascript; charset=utf-8')
               } else {
                 req.send(content, 'application/javascript; charset=utf-8')
               }
@@ -177,7 +197,7 @@ export class Server {
 
       // serve APIs
       if (pathname.startsWith('/api/')) {
-        const route = app.getAPIRoute({
+        const route = await app.getAPIRoute({
           pathname,
           search: Array.from(url.searchParams.keys()).length > 0 ? '?' + url.searchParams.toString() : ''
         })

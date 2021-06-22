@@ -19,7 +19,7 @@ export type RendererStore = {
 export async function render(
   url: RouterURL,
   App: ComponentType<any> | undefined,
-  nestedPageComponents: { url: string, Component?: any }[],
+  nestedPageComponents: { specifier: string, Component?: any }[],
   styles: Record<string, { css?: string, href?: string }>
 ): Promise<FrameworkRenderResult> {
   const global = globalThis as any

@@ -1,11 +1,14 @@
 import '../es2020/mod.ts'
 
-if (!('fromEntries' in Object.prototype)) {
-  Object.prototype.fromEntries = function fromEntries(iterable) {
-    return [...iterable].reduce((obj, [key, val]) => {
-      obj[key] = val
-      return obj
-    }, {})
+if (!('fromEntries' in Object)) {
+  Object.fromEntries = function fromEntries(iterable) {
+    if (iterable && typeof iterable.next === 'function') {
+      return Array.from(iterable).reduce((obj, [key, val]) => {
+        obj[key] = val
+        return obj
+      }, {})
+    }
+    return {}
   }
 }
 

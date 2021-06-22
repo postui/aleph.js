@@ -61,14 +61,13 @@ main {
 
 .links a {
   margin: 0 9px;
-  color: #777;
+  color: #666;
   text-decoration: none;
-  border-bottom: 1px dashed #ccc;
+  transition: color 0.15s ease-in;
 }
 
 .links a:hover {
-  color: #333;
-  border-bottom-color: transparent;
+  color: #000;
 }
 
 .counter {
@@ -106,22 +105,22 @@ main {
   display: line-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  box-shadow: 0 0 1px rgba(0, 0, 0, 0.5);
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid #ddd;
   line-height: 1;
   font-size: 12px;
   font-family: Courier, monospace;
   font-weight: 600;
-  color: #666;
-  transition: color 0.1s ease-in-out, box-shadow 0.1s ease-in-out;
+  color: #999;
+  transition: color 0.1s ease-in-out, border-color 0.1s ease-in-out;
   cursor: pointer;
 }
 
 .counter button:hover {
-  color: #111;
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+  color: #000;
+  border-color:#ccc;
 }
 
 .counter button + button {

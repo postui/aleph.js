@@ -1,4 +1,4 @@
-import { serve as stdServe, serveTLS, Server as StdServer } from 'https://deno.land/std@0.96.0/http/server.ts'
+import { serve as stdServe, serveTLS, Server as StdServer } from 'https://deno.land/std@0.99.0/http/server.ts'
 import log from '../shared/log.ts'
 import type { ServerRequest } from '../types.ts'
 import { Application } from './app.ts'

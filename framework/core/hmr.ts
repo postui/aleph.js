@@ -5,17 +5,17 @@ interface Callback {
 }
 
 class Module {
-  private _url: string
+  private _specifier: string
   private _isLocked: boolean = false
   private _isAccepted: boolean = false
   private _acceptCallbacks: Callback[] = []
 
-  get url() {
-    return this._url
+  get specifier() {
+    return this._specifier
   }
 
-  constructor(url: string) {
-    this._url = url
+  constructor(specifier: string) {
+    this._specifier = specifier
   }
 
   lock(): void {
@@ -27,7 +27,7 @@ class Module {
       return
     }
     if (!this._isAccepted) {
-      sendMessage({ url: this._url, type: 'hotAccept' })
+      sendMessage({ specifier: this._specifier, type: 'hotAccept' })
       this._isAccepted = true
     }
     if (callback) {
@@ -35,9 +35,9 @@ class Module {
     }
   }
 
-  async applyUpdate(updateUrl: string) {
+  async applyUpdate(url: string) {
     try {
-      const module = await import(updateUrl + '?t=' + Date.now())
+      const module = await import(url + '?t=' + Date.now())
       this._acceptCallbacks.forEach(cb => cb(module))
     } catch (e) {
       location.reload()
@@ -66,8 +66,8 @@ function sendMessage(msg: any) {
 export function connect(basePath: string) {
   const { location } = window as any
   const { protocol, host } = location
-  const url = (protocol === 'https:' ? 'wss' : 'ws') + '://' + host + basePath.replace(/\/+$/, '') + '/_hmr'
-  const ws = new WebSocket(url)
+  const wsUrl = (protocol === 'https:' ? 'wss' : 'ws') + '://' + host + basePath.replace(/\/+$/, '') + '/_hmr'
+  const ws = new WebSocket(wsUrl)
 
   ws.addEventListener('open', () => {
     state.socket = ws
@@ -86,7 +86,7 @@ export function connect(basePath: string) {
       console.log('[HMR] closed.')
       // reload the page when re-connected
       setInterval(() => {
-        const ws = new WebSocket(url)
+        const ws = new WebSocket(wsUrl)
         ws.addEventListener('open', () => {
           location.reload()
         })
@@ -99,35 +99,37 @@ export function connect(basePath: string) {
       try {
         const {
           type,
-          url,
+          specifier,
           updateUrl,
           routePath,
           isIndex,
-          useDeno,
+          refetchPage
         } = JSON.parse(data)
+        if (refetchPage === true) {
+          location.reload()
+        }
         switch (type) {
           case 'add':
             events.emit('add-module', {
-              url,
+              specifier,
               routePath,
               isIndex,
-              useDeno,
             })
             break
           case 'update':
-            const mod = modules.get(url)
+            const mod = modules.get(specifier)
             if (mod) {
               mod.applyUpdate(updateUrl)
             }
             break
           case 'remove':
-            if (modules.has(url)) {
-              modules.delete(url)
-              events.emit('remove-module', url)
+            if (modules.has(specifier)) {
+              modules.delete(specifier)
+              events.emit('remove-module', specifier)
             }
             break
         }
-        console.log(`[HMR] ${type} module '${url}'`)
+        console.log(`[HMR] ${type} module '${specifier}'`)
       } catch (err) {
         console.warn(err)
       }
@@ -135,14 +137,14 @@ export function connect(basePath: string) {
   })
 }
 
-export function createHotContext(url: string) {
-  if (modules.has(url)) {
-    const mod = modules.get(url)!
+export function createHotContext(specifier: string) {
+  if (modules.has(specifier)) {
+    const mod = modules.get(specifier)!
     mod.lock()
     return mod
   }
 
-  const mod = new Module(url)
-  modules.set(url, mod)
+  const mod = new Module(specifier)
+  modules.set(specifier, mod)
   return mod
 }

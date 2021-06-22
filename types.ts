@@ -1,10 +1,10 @@
-import type { Status } from 'https://deno.land/std@0.96.0/http/http_status.ts'
-import type { BufReader, BufWriter } from 'https://deno.land/std@0.96.0/io/bufio.ts'
-import type { MultipartFormData } from 'https://deno.land/std@0.96.0/mime/multipart.ts'
-import { Plugin, PluginCreator } from 'https://esm.sh/postcss@8.2.12'
+import type { Status } from 'https://deno.land/std@0.99.0/http/http_status.ts'
+import type { BufReader, BufWriter } from 'https://deno.land/std@0.99.0/io/bufio.ts'
+import type { MultipartFormData } from 'https://deno.land/std@0.99.0/mime/multipart.ts'
+import { Plugin, PluginCreator } from 'https://esm.sh/postcss@8.2.15'
 
 /**
- * The config for the aleph server application.
+ * The config for aleph server.
  */
 export type Config = {
   /** `framework` specifies the framework (default is 'react'). */
@@ -33,7 +33,7 @@ export type Config = {
   headers?: Record<string, string>
   /** `rewrites` specifies the server rewrite map. */
   rewrites?: Record<string, string>
-  /** `compress` enbles gzip/brotli compression for static files and SSR content. */
+  /** `compress` enbles gzip/brotli compression for static files and SSR content (default is **true**). */
   compress?: boolean
   /** `env` appends system env variables. */
   env?: Record<string, string>
@@ -47,20 +47,20 @@ export type LoaderPlugin = {
   name: string
   /** `type` specifies the plugin type. */
   type: 'loader'
-  /** `test` matches the import url. */
+  /** `test` matches the import specifier. */
   test: RegExp
   /** `acceptHMR` enables the HMR. */
   acceptHMR?: boolean
   /** allowPage` allows to load the module as a page. */
   allowPage?: boolean
-  /** `resove` resolves the module url. */
-  resolve?(url: string): ResolveResult
+  /** `resove` resolves the module specifier. */
+  resolve?(specifier: string): ResolveResult
   /** `load` loads the source content. */
-  load?(input: { url: string, data?: any }, app: ServerApplication): LoaderOutput | Promise<LoaderOutput>
+  load?(input: { specifier: string, data?: any }, app: ServerApplication): LoaderOutput | Promise<LoaderOutput>
 }
 
 /**
- * A server plugin to enhance the aleph server application.
+ * A server plugin to enhance aleph server.
  */
 export type ServerPlugin = {
   /** `name` gives the plugin a name. */
@@ -77,10 +77,10 @@ export type ServerPlugin = {
 export type PostCSSPlugin = string | [string, any] | Plugin | PluginCreator<any>
 
 /**
- * The result of loader resove.
+ * The result of loader's resolve method.
  */
 export type ResolveResult = {
-  url: string,
+  specifier: string,
   external?: boolean,
   pagePath?: string,
   isIndex?: boolean
@@ -88,7 +88,7 @@ export type ResolveResult = {
 }
 
 /**
- * The output of loader.
+ * The output of loader's load method.
  */
 export type LoaderOutput = {
   /** The transformed code type (default is 'js'). */
@@ -128,14 +128,14 @@ export type ImportMap = {
  * The config for CSS loader.
  */
 export type CSSOptions = {
-  /** `extractSize` specifies the extract size (default is 8k). */
-  extractSize?: number
-  /** `remoteExternal` loads remote css as external when it is true. */
-  remoteExternal?: boolean
-  /** `module` enables the css module feature. */
-  modules?: boolean | CSSModulesOptions
+  /** `cache` caches remote css to local if it is true. */
+  cache?: boolean
+  /** `extract` specifies the extract options (default is true with 8k limit). */
+  extract?: boolean | { limit?: number }
   /** `postcss` specifies the postcss plugins. */
   postcss?: { plugins: PostCSSPlugin[] }
+  /** `modules` enables the css modules feature. */
+  modules?: boolean | CSSModulesOptions | ((path: string) => boolean | CSSModulesOptions)
 }
 
 /**
@@ -169,10 +169,11 @@ export interface ServerApplication {
   readonly buildDir: string
   readonly config: Required<Config>
   readonly importMap: ImportMap
-  addModule(url: string, sourceCode?: string): Promise<void>
+  addModule(specifier: string, sourceCode?: string): Promise<void>
   addDist(path: string, content: Uint8Array): Promise<void>
   fetch(url: string): Promise<{ content: Uint8Array, contentType: string | null }>
-  injectCode(stage: 'compilation' | 'hmr' | 'ssr', transform: (url: string, code: string) => string): void
+  injectCode(phase: 'compilation' | 'hmr' | 'ssr', test: RegExp | string, transform: (specifier: string, code: string, map?: string) => { code: string, map?: string }): void
+  injectCode(phase: 'compilation' | 'hmr' | 'ssr', transform: (specifier: string, code: string, map?: string) => { code: string, map?: string }): void
 }
 
 /**

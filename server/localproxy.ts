@@ -1,5 +1,5 @@
-import { join } from 'https://deno.land/std@0.96.0/path/mod.ts'
-import { serve } from 'https://deno.land/std@0.96.0/http/server.ts'
+import { join } from 'https://deno.land/std@0.99.0/path/mod.ts'
+import { serve } from 'https://deno.land/std@0.99.0/http/server.ts'
 import log from '../shared/log.ts'
 import { Request } from './api.ts'
 import { getContentType } from './mime.ts'

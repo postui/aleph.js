@@ -24,8 +24,10 @@ Deno.test(`util`, async () => {
   assertEquals(util.splitBy('foobar', '.'), ['foobar', ''])
 
   // test formatBytes
-  assertEquals(util.formatBytes(100), '100B')
-  assertEquals(util.formatBytes(1024 ** 1), '1KB')
+  assertEquals(util.formatBytes(1000), '1000B')
+  assertEquals(util.formatBytes(1024), '1KB')
+  assertEquals(util.formatBytes(2048), '2KB')
+  assertEquals(util.formatBytes(3000), '2.9KB')
   assertEquals(util.formatBytes(1024 ** 2), '1MB')
   assertEquals(util.formatBytes(1024 ** 3), '1GB')
   assertEquals(util.formatBytes(1024 ** 4), '1TB')

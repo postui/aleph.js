@@ -1,10 +1,11 @@
-import { useRouter } from "framework/react"
-import React from "react"
+import { useRouter } from 'framework/react'
+import React from 'react'
 
 export default function Query() {
   const router = useRouter()
   const color = router.params.name || 'white'
   const textColor = router.query.get('text') || 'black'
+
   return (
     <div>
       <head>

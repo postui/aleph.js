@@ -1,11 +1,11 @@
-import { basename, extname, join } from 'https://deno.land/std@0.96.0/path/mod.ts'
+import { extname } from 'https://deno.land/std@0.99.0/path/mod.ts'
 import { esbuild } from '../bundler/esbuild.ts'
 import { toLocalPath, computeHash } from '../server/helper.ts'
 import util from '../shared/util.ts'
 import { Measure } from '../shared/log.ts'
 import type { LoaderPlugin, PostCSSPlugin } from '../types.ts'
 
-const postcssVersion = '8.2.12'
+const postcssVersion = '8.2.15'
 const productionOnlyPostcssPlugins = ['autoprefixer']
 
 export default (): LoaderPlugin => {
@@ -17,18 +17,18 @@ export default (): LoaderPlugin => {
     type: 'loader',
     test: /\.(css|pcss|postcss)$/i,
     acceptHMR: true,
-    load: async ({ url, data }, app) => {
+    load: async ({ specifier, data }, app) => {
       const ms = new Measure()
       const { css: cssConfig } = app.config
-      const isRemote = util.isLikelyHttpURL(url)
+      const isRemote = util.isLikelyHttpURL(specifier)
 
-      if (isRemote && url.endsWith('.css') && cssConfig.remoteExternal) {
+      if (isRemote && specifier.endsWith('.css') && !cssConfig.cache) {
         return {
           code: [
             `import { applyCSS } from "https://deno.land/x/aleph/framework/core/style.ts"`,
-            `export const href = ${JSON.stringify(url)}`,
+            `export const href = ${JSON.stringify(specifier)}`,
             `export default {}`,
-            `applyCSS(${JSON.stringify(url)}, { href })`,
+            `applyCSS(${JSON.stringify(specifier)}, { href })`,
           ].join('\n')
         }
       }
@@ -44,8 +44,8 @@ export default (): LoaderPlugin => {
           }) || []
           plugins.push(['postcss-modules', {
             ...(util.isPlainObject(cssConfig.modules) ? cssConfig.modules : {}),
-            getJSON: (url: string, json: Record<string, string>) => {
-              modulesJSON.set(url, json)
+            getJSON: (specifier: string, json: Record<string, string>) => {
+              modulesJSON.set(specifier, json)
             },
           }])
         }
@@ -62,19 +62,19 @@ export default (): LoaderPlugin => {
       } else if (util.isNEString(data)) {
         sourceCode = data
       } else {
-        const { content } = await app.fetch(url)
+        const { content } = await app.fetch(specifier)
         sourceCode = (new TextDecoder).decode(content)
       }
 
       // do not process remote css files
-      if (isRemote && url.endsWith('.css')) {
+      if (isRemote && specifier.endsWith('.css')) {
         css = sourceCode
       } else {
-        const ret = await postcss.process(sourceCode, { from: url }).async()
+        const ret = await postcss.process(sourceCode, { from: specifier }).async()
         css = ret.css
-        if (modulesJSON.has(url)) {
-          cssModules = modulesJSON.get(url)!
-          modulesJSON.delete(url)
+        if (modulesJSON.has(specifier)) {
+          cssModules = modulesJSON.get(specifier)!
+          modulesJSON.delete(specifier)
         }
       }
 
@@ -82,8 +82,8 @@ export default (): LoaderPlugin => {
         const ret = await esbuild({
           stdin: {
             loader: 'css',
-            sourcefile: url,
-            contents: css // 3.6mb, tailwind.css
+            sourcefile: specifier,
+            contents: css
           },
           bundle: false,
           minify: true,
@@ -92,24 +92,24 @@ export default (): LoaderPlugin => {
         css = util.trimSuffix(ret.outputFiles[0].text, '\n')
       }
 
-      ms.stop(`process ${url}`)
+      ms.stop(`process ${specifier}`)
 
-      if (url.startsWith('#inline-style-')) {
+      if (specifier.startsWith('#inline-style-')) {
         return { type: 'css', code: css }
       }
 
-      const { extractSize = 8 * 1024 } = cssConfig
-      if (css.length > extractSize) {
-        const ext = extname(url)
+      const { extract } = cssConfig
+      if (extract && (extract === true || css.length > (extract.limit || 8 * 1024))) {
+        const ext = extname(specifier)
         const hash = computeHash(css).slice(0, 8)
-        const path = util.trimSuffix(isRemote ? toLocalPath(url) : url, ext) + '.' + hash + ext
+        const path = util.trimSuffix(isRemote ? toLocalPath(specifier) : specifier, ext) + '.' + hash + ext
         await app.addDist(path, (new TextEncoder).encode(css))
         return {
           code: [
             `import { applyCSS } from "https://deno.land/x/aleph/framework/core/style.ts"`,
             `export const href = ${JSON.stringify('/_aleph/' + util.trimPrefix(path, '/'))}`,
             `export default ${JSON.stringify(cssModules)}`,
-            `applyCSS(${JSON.stringify(url)}, { href })`
+            `applyCSS(${JSON.stringify(specifier)}, { href })`
           ].join('\n'),
           // todo: generate map
         }
@@ -120,7 +120,7 @@ export default (): LoaderPlugin => {
           `import { applyCSS } from "https://deno.land/x/aleph/framework/core/style.ts"`,
           `export const css = ${JSON.stringify(css)}`,
           `export default ${JSON.stringify(cssModules)}`,
-          `applyCSS(${JSON.stringify(url)}, { css })`,
+          `applyCSS(${JSON.stringify(specifier)}, { css })`,
         ].join('\n'),
         // todo: generate map
       }

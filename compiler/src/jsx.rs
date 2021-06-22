@@ -1,5 +1,4 @@
-use crate::resolve::{is_remote_url, DependencyDescriptor, InlineStyle, Resolver};
-use crate::resolve_fold::create_aleph_pack_var_decl_member;
+use crate::resolver::{is_remote_url, InlineStyle, Resolver};
 use sha1::{Digest, Sha1};
 use std::{cell::RefCell, rc::Rc};
 use swc_common::{SourceMap, Spanned, DUMMY_SP};
@@ -11,16 +10,13 @@ pub fn aleph_jsx_fold(
   resolver: Rc<RefCell<Resolver>>,
   source: Rc<SourceMap>,
   is_dev: bool,
-) -> (impl Fold, impl Fold) {
-  (
-    AlephJsxFold {
-      resolver: resolver.clone(),
-      source,
-      inline_style_idx: 0,
-      is_dev,
-    },
-    AlephJsxBuiltinModuleResolveFold { resolver: resolver },
-  )
+) -> impl Fold {
+  AlephJsxFold {
+    resolver: resolver.clone(),
+    source,
+    inline_style_idx: 0,
+    is_dev,
+  }
 }
 
 /// aleph.js jsx fold, core functions include:
@@ -68,13 +64,13 @@ impl AlephJsxFold {
         match name {
           "head" => {
             let mut resolver = self.resolver.borrow_mut();
-            resolver.builtin_jsx_tags.insert("Head".into());
+            resolver.used_builtin_jsx_tags.insert("Head".into());
             el.name = JSXElementName::Ident(quote_ident!("__ALEPH_Head"));
           }
 
           "script" => {
             let mut resolver = self.resolver.borrow_mut();
-            resolver.builtin_jsx_tags.insert("CustomScript".into());
+            resolver.used_builtin_jsx_tags.insert("CustomScript".into());
             el.name = JSXElementName::Ident(quote_ident!("__ALEPH_CustomScript"));
           }
 
@@ -102,7 +98,7 @@ impl AlephJsxFold {
             }
 
             if should_replace {
-              resolver.builtin_jsx_tags.insert("Anchor".into());
+              resolver.used_builtin_jsx_tags.insert("Anchor".into());
               el.name = JSXElementName::Ident(quote_ident!("__ALEPH_Anchor"));
             }
           }
@@ -165,7 +161,7 @@ impl AlephJsxFold {
               }
 
               if name.eq("link") {
-                resolver.builtin_jsx_tags.insert("StyleLink".into());
+                resolver.used_builtin_jsx_tags.insert("StyleLink".into());
                 el.name = JSXElementName::Ident(quote_ident!("__ALEPH_StyleLink"));
               }
             }
@@ -212,12 +208,7 @@ impl AlephJsxFold {
             }
 
             let mut resolver = self.resolver.borrow_mut();
-            resolver.dep_graph.push(DependencyDescriptor {
-              specifier: "#".to_owned() + id.as_str(),
-              import_index: "".into(),
-              is_dynamic: false,
-            });
-            resolver.builtin_jsx_tags.insert("InlineStyle".into());
+            resolver.used_builtin_jsx_tags.insert("InlineStyle".into());
             el.name = JSXElementName::Ident(quote_ident!("__ALEPH_InlineStyle"));
             inline_style = Some((type_prop_value, id.into()));
           }
@@ -349,82 +340,6 @@ impl Fold for AlephJsxFold {
   }
 }
 
-/// aleph.js jsx builtin module resolve fold.
-struct AlephJsxBuiltinModuleResolveFold {
-  resolver: Rc<RefCell<Resolver>>,
-}
-
-impl Fold for AlephJsxBuiltinModuleResolveFold {
-  noop_fold_type!();
-
-  fn fold_module_items(&mut self, module_items: Vec<ModuleItem>) -> Vec<ModuleItem> {
-    let mut items = Vec::<ModuleItem>::new();
-    let aleph_pkg_uri = self.resolver.borrow().get_aleph_pkg_uri();
-    let extra_imports = self.resolver.borrow().extra_imports.clone();
-    let mut resolver = self.resolver.borrow_mut();
-
-    for mut name in resolver.builtin_jsx_tags.clone() {
-      if name.eq("a") {
-        name = "anchor".to_owned()
-      }
-      let mut id_name = "__ALEPH_".to_owned();
-      id_name.push_str(name.as_str());
-      let id = quote_ident!(id_name);
-      let (resolved_path, fixed_url) = resolver.resolve(
-        format!("{}/framework/react/components/{}.ts", aleph_pkg_uri, name).as_str(),
-        false,
-      );
-      if resolver.bundle_mode && resolver.bundle_external.contains(fixed_url.as_str()) {
-        items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(VarDecl {
-          span: DUMMY_SP,
-          kind: VarDeclKind::Const,
-          declare: false,
-          decls: vec![create_aleph_pack_var_decl_member(
-            fixed_url.as_str(),
-            vec![(id, Some("default".into()))],
-          )],
-        }))));
-      } else {
-        items.push(ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
-          span: DUMMY_SP,
-          specifiers: vec![ImportSpecifier::Default(ImportDefaultSpecifier {
-            span: DUMMY_SP,
-            local: id,
-          })],
-          src: Str {
-            span: DUMMY_SP,
-            value: resolved_path.into(),
-            has_escape: false,
-            kind: Default::default(),
-          },
-          type_only: false,
-          asserts: None,
-        })));
-      }
-    }
-
-    for imp in extra_imports {
-      items.push(ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
-        span: DUMMY_SP,
-        specifiers: vec![],
-        src: Str {
-          span: DUMMY_SP,
-          value: imp.into(),
-          has_escape: false,
-          kind: Default::default(),
-        },
-        type_only: false,
-        asserts: None,
-      })));
-    }
-
-    for item in module_items {
-      items.push(item)
-    }
-    items
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use crate::swc::st;
@@ -477,24 +392,24 @@ mod tests {
     assert!(code.contains("href: \"/style/index.css\""));
     assert!(code.contains(
       format!(
-        "import   \"../style/index.css.js#{}@000002\"",
+        "import   \"../style/index.css.js#{}@000000\"",
         "/style/index.css"
       )
       .as_str()
     ));
     let r = resolver.borrow_mut();
     assert_eq!(
-      r.dep_graph
+      r.deps
         .iter()
         .map(|g| { g.specifier.as_str() })
         .collect::<Vec<&str>>(),
       vec![
-        "https://esm.sh/react",
         "/style/index.css",
         "https://deno.land/x/aleph@v0.3.0/framework/react/components/Head.ts",
         "https://deno.land/x/aleph@v0.3.0/framework/react/components/StyleLink.ts",
         "https://deno.land/x/aleph@v0.3.0/framework/react/components/Anchor.ts",
         "https://deno.land/x/aleph@v0.3.0/framework/react/components/CustomScript.ts",
+        "https://esm.sh/react"
       ]
     );
   }

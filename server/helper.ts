@@ -1,8 +1,8 @@
-import { dim, red, yellow } from 'https://deno.land/std@0.96.0/fmt/colors.ts'
-import { createHash } from 'https://deno.land/std@0.96.0/hash/mod.ts'
-import { dirname, basename, extname, join, relative } from 'https://deno.land/std@0.96.0/path/mod.ts'
+import { dim, red, yellow } from 'https://deno.land/std@0.99.0/fmt/colors.ts'
+import { createHash } from 'https://deno.land/std@0.99.0/hash/mod.ts'
+import { dirname, basename, extname, join, relative } from 'https://deno.land/std@0.99.0/path/mod.ts'
 import { minDenoVersion } from '../shared/constants.ts'
-import { existsDir } from '../shared/fs.ts'
+import { existsFile, existsDir } from '../shared/fs.ts'
 import log from '../shared/log.ts'
 import util from '../shared/util.ts'
 import { SourceType } from '../compiler/mod.ts'
@@ -31,15 +31,6 @@ Object.assign((globalThis as any).navigator, {
 let _denoDir: string | null = null
 let _localProxy = false
 
-export const moduleWalkOptions = {
-  includeDirs: false,
-  skip: [
-    /(^|\/|\\)\./,
-    /\.d\.ts$/i,
-    /(\.|_)(test|spec|e2e)\.[a-z]+$/i
-  ]
-}
-
 export function checkDenoVersion() {
   const [currentMajor, currentMinor, currentPatch] = Deno.version.deno.split('.').map(p => parseInt(p))
   const [major, minor, patch] = minDenoVersion.split('.').map(p => parseInt(p))
@@ -60,6 +51,12 @@ export function checkAlephDev() {
   }
 }
 
+export const moduleExclude = [
+  /(^|\/|\\)\./,
+  /\.d\.ts$/i,
+  /(\.|_)(test|spec|e2e)\.[a-z]+$/i
+]
+
 const reLocalUrl = /^https?:\/\/(localhost|0\.0\.0\.0|127\.0\.0\.1)(\:|\/|$)/
 
 /** check whether it is a localhost url. */
@@ -70,6 +67,16 @@ export function isLocalUrl(url: string): boolean {
 /** check the plugin whether it is a loader. */
 export function isLoaderPlugin(plugin: LoaderPlugin | ServerPlugin): plugin is LoaderPlugin {
   return plugin.type === 'loader'
+}
+
+export async function findFile(wd: string, filenames: string[]) {
+  for (const filename of filenames) {
+    const fullPath = join(wd, filename)
+    if (await existsFile(fullPath)) {
+      return fullPath
+    }
+  }
+  return null
 }
 
 /** get the deno cache dir. */

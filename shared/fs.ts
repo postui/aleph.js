@@ -1,5 +1,5 @@
-import { dirname } from 'https://deno.land/std@0.96.0/path/mod.ts'
-import { ensureDir } from 'https://deno.land/std@0.96.0/fs/ensure_dir.ts'
+import { dirname } from 'https://deno.land/std@0.99.0/path/mod.ts'
+import { ensureDir } from 'https://deno.land/std@0.99.0/fs/ensure_dir.ts'
 
 /* check whether or not the given path exists as a directory. */
 export async function existsDir(path: string): Promise<boolean> {
@@ -33,7 +33,7 @@ export async function existsFile(path: string): Promise<boolean> {
   }
 }
 
-/** ensure and write a text file. */
+/** ensure and write text file. */
 export async function ensureTextFile(name: string, content: string): Promise<void> {
   const dir = dirname(name)
   await ensureDir(dir)

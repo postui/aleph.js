@@ -56,22 +56,29 @@ export default {
     return atob(b64)
   },
   formatBytes(bytes: number) {
+    const fix = (n: number) => {
+      if (n >= 10) {
+        return Math.ceil(n)
+      } else {
+        return (Math.round(10 * n) / 10).toFixed(1).replace(/\.0$/, '')
+      }
+    }
     if (bytes < 1024) {
       return bytes.toString() + 'B'
     }
     if (bytes < 1024 ** 2) {
-      return Math.ceil(bytes / 1024) + 'KB'
+      return fix(bytes / 1024) + 'KB'
     }
     if (bytes < 1024 ** 3) {
-      return Math.ceil(bytes / 1024 ** 2) + 'MB'
+      return fix(bytes / 1024 ** 2) + 'MB'
     }
     if (bytes < 1024 ** 4) {
-      return Math.ceil(bytes / 1024 ** 3) + 'GB'
+      return fix(bytes / 1024 ** 3) + 'GB'
     }
     if (bytes < 1024 ** 5) {
-      return Math.ceil(bytes / 1024 ** 4) + 'TB'
+      return fix(bytes / 1024 ** 4) + 'TB'
     }
-    return Math.ceil(bytes / 1024 ** 5) + 'PB'
+    return fix(bytes / 1024 ** 5) + 'PB'
   },
   splitPath(path: string): string[] {
     return path

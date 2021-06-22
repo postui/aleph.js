@@ -12,7 +12,7 @@ export type PageRoute = PageProps & {
   url: RouterURL
 }
 
-export function createPageProps(nestedComponents: { url: string, Component?: ComponentType<any> }[]): PageProps {
+export function createPageProps(nestedComponents: { specifier: string, Component?: ComponentType<any> }[]): PageProps {
   const pageProps: PageProps = {
     Page: null,
     pageProps: null
@@ -30,7 +30,7 @@ export function createPageProps(nestedComponents: { url: string, Component?: Com
   return pageProps
 }
 
-function createPagePropsSegment(seg: { url: string, Component?: ComponentType<any> }): PageProps {
+function createPagePropsSegment(seg: { specifier: string, Component?: ComponentType<any> }): PageProps {
   const pageProps: PageProps = {
     Page: null,
     pageProps: null
@@ -40,7 +40,7 @@ function createPagePropsSegment(seg: { url: string, Component?: ComponentType<an
       pageProps.Page = seg.Component
     } else {
       pageProps.Page = E400MissingComponent
-      pageProps.pageProps = { name: 'Page Component: ' + seg.url }
+      pageProps.pageProps = { name: 'Page Component: ' + seg.specifier }
     }
   }
   return pageProps

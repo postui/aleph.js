@@ -1,11 +1,11 @@
-import { join } from 'https://deno.land/std@0.96.0/path/mod.ts'
-import { ensureDir } from 'https://deno.land/std@0.96.0/fs/ensure_dir.ts'
+import { join } from 'https://deno.land/std@0.99.0/path/mod.ts'
+import { ensureDir } from 'https://deno.land/std@0.99.0/fs/ensure_dir.ts'
 import { existsFile } from '../shared/fs.ts'
 import { Measure } from '../shared/log.ts'
 import type { ImportMap } from '../types.ts'
-import { VERSION } from '../version.ts'
-import { checksum } from './dist/wasm-checksum.js'
-import init, { parseExportNamesSync, transformSync } from './dist/wasm-pack.js'
+import { getDenoDir } from '../server/helper.ts'
+import { checksum } from './dist/checksum.js'
+import init, { parseExportNamesSync, stripSsrCodeSync, transformSync } from './dist/compiler.js'
 
 export enum SourceType {
   JS = 'js',
@@ -16,39 +16,45 @@ export enum SourceType {
   Unknown = '??',
 }
 
-export type ReactResolve = {
-  version: string,
-  esmShBuildVersion: number
-}
-
 export type SWCOptions = {
   sourceType?: SourceType
   jsxFactory?: string
   jsxFragmentFactory?: string
 }
 
+export type ReactOptions = {
+  version: string,
+  esmShBuildVersion: number
+}
+
 export type TransformOptions = {
-  importMap?: ImportMap
-  alephPkgUri?: string
-  react?: ReactResolve
   swcOptions?: SWCOptions
+  workingDir?: string
+  alephPkgUri?: string
+  importMap?: ImportMap
+  react?: ReactOptions
   sourceMap?: boolean
   isDev?: boolean
+  externalRemoteDeps?: boolean
   bundleMode?: boolean
-  bundleExternal?: string[]
+  bundleExternals?: string[]
   inlineStylePreprocess?(key: string, type: string, tpl: string): Promise<string>
 }
 
 export type TransformResult = {
   code: string
-  deps: Array<{
-    specifier: string
-    importIndex: string
-    isDynamic: boolean
-  }>
-  useDenoHooks?: string[]
+  deps?: DependencyDescriptor[]
+  ssrPropsFn?: string
+  ssgPathsFn?: boolean
+  denoHooks?: string[]
   starExports?: string[]
   map?: string
+}
+
+type DependencyDescriptor = {
+  specifier: string
+  resolved: string
+  isDynamic: boolean
 }
 
 type InlineStyle = {
@@ -57,23 +63,12 @@ type InlineStyle = {
   exprs: string[]
 }
 
-type InlineStyleRecord = Record<string, InlineStyle>
+type InlineStyles = Record<string, InlineStyle>
 
 let wasmReady: Promise<void> | boolean = false
 
-async function getDenoDir() {
-  const p = Deno.run({
-    cmd: [Deno.execPath(), 'info', '--json', '--unstable'],
-    stdout: 'piped',
-    stderr: 'null'
-  })
-  const output = (new TextDecoder).decode(await p.output())
-  p.close()
-  return JSON.parse(output).denoDir
-}
-
-export async function initWasm() {
-  const cacheDir = join(await getDenoDir(), `deps/https/deno.land/aleph@v${VERSION}`)
+async function initWasm() {
+  const cacheDir = join(await getDenoDir(), `deps/https/deno.land/aleph`)
   const cachePath = `${cacheDir}/compiler.${checksum}.wasm`
   if (await existsFile(cachePath)) {
     const wasmData = await Deno.readFile(cachePath)
@@ -112,21 +107,11 @@ async function checkWasmReady() {
  *     export default App() {
  *       return <h1>Hello World</h1>
  *     }
- *   `,
- *   {
- *     url: '/app.tsx'
- *     swcOptions: {
- *       target: 'es2020'
- *     }
- *   }
+ *   `
  * )
  * ```
- *
- * @param {string} url - the module URL.
- * @param {string} code - the mocule code.
- * @param {object} options - the transform options.
  */
-export async function transform(url: string, code: string, options: TransformOptions = {}): Promise<TransformResult> {
+export async function transform(specifier: string, code: string, options: TransformOptions = {}): Promise<TransformResult> {
   await checkWasmReady()
 
   const { inlineStylePreprocess, ...transformOptions } = options
@@ -134,14 +119,14 @@ export async function transform(url: string, code: string, options: TransformOpt
     code: jsContent,
     deps,
     inlineStyles,
-    useDenoHooks,
+    denoHooks,
     starExports,
     map,
-  } = transformSync(url, code, transformOptions)
+  } = transformSync(specifier, code, transformOptions)
 
   // resolve inline-style
   if (inlineStyles) {
-    await Promise.all(Object.entries(inlineStyles as InlineStyleRecord).map(async ([key, style]) => {
+    await Promise.all(Object.entries(inlineStyles as InlineStyles).map(async ([key, style]) => {
       let tpl = style.quasis.reduce((tpl, quais, i, a) => {
         tpl += quais
         if (i < a.length - 1) {
@@ -168,19 +153,25 @@ export async function transform(url: string, code: string, options: TransformOpt
   return {
     code: jsContent,
     deps,
-    useDenoHooks,
+    denoHooks,
     starExports,
     map
   }
 }
 
-/* parse export names of the module */
-export async function parseExportNames(url: string, code: string, options: SWCOptions = {}): Promise<string[]> {
+/* strip SSR code. */
+export async function stripSsrCode(specifier: string, code: string, options: TransformOptions = {}): Promise<TransformResult> {
   await checkWasmReady()
-  return parseExportNamesSync(url, code, options)
+  return stripSsrCodeSync(specifier, code, options)
+}
+
+/* parse export names of the module. */
+export async function parseExportNames(specifier: string, code: string, options: SWCOptions = {}): Promise<string[]> {
+  await checkWasmReady()
+  return parseExportNamesSync(specifier, code, options)
 }
 
 /**
- * The wasm build checksum.
+ * The wasm checksum.
  */
-export const buildChecksum = checksum
+export const wasmChecksum = checksum

@@ -1,11 +1,11 @@
-import { dirname, join } from 'https://deno.land/std@0.96.0/path/mod.ts'
-import { ensureDir } from 'https://deno.land/std@0.96.0/fs/ensure_dir.ts'
+import { dirname, join } from 'https://deno.land/std@0.99.0/path/mod.ts'
+import { ensureDir } from 'https://deno.land/std@0.99.0/fs/ensure_dir.ts'
 import { transform } from '../compiler/mod.ts'
-import { trimModuleExt } from '../framework/core/module.ts'
+import { trimBuiltinModuleExts } from '../framework/core/module.ts'
 import { ensureTextFile, existsFile, lazyRemove } from '../shared/fs.ts'
-import util from '../shared/util.ts'
 import type { BrowserNames } from '../types.ts'
 import { VERSION } from '../version.ts'
+import type { DependencyGraph } from '../server/analyzer.ts'
 import type { Application, Module } from '../server/app.ts'
 import { clearBuildCache, computeHash, getAlephPkgUri } from '../server/helper.ts'
 import { esbuild, stopEsbuild, esbuildUrlLoader } from './esbuild.ts'
@@ -14,32 +14,33 @@ export const bundlerRuntimeCode = `
   window.__ALEPH = {
     basePath: '/',
     pack: {},
-    bundled: {},
-    import: function(u, F) {
-      var b = this.basePath,
-          a = this.pack,
-          l = this.bundled;
-      if (u in a) {
-        return Promise.resolve(a[u]);
+    asyncChunks: {},
+    import: function(s, r) {
+      var a = this.pack,
+          b = this.basePath,
+          d = document,
+          l = this.asyncChunks;
+      if (s in a) {
+        return Promise.resolve(a[s]);
       }
       return new Promise(function(y, n) {
-        var s = document.createElement('script'),
-            f = l[u] || l[u.replace(/\\.[a-zA-Z0-9]+$/, '')],
-            p = (b + '/_aleph').replace('//', '/');
+        var e = d.createElement('script'),
+            f = l[s] || l[s.replace(/\\.[a-zA-Z0-9]+$/, '')],
+            p = b.replace(/\\/+$/, '') + '/_aleph';
         if (!f) {
-          n(new Error('invalid url: ' + u));
+          n(new Error('invalid specifier: ' + s));
           return;
         }
-        s.onload = function() {
-          y(a[u]);
+        e.onload = function() {
+          y(a[s]);
         };
-        s.onerror = n;
+        e.onerror = n;
         p += f;
-        if (F) {
+        if (r) {
           p += '?t=' + (new Date).getTime();
         }
-        s.src = p;
-        document.body.appendChild(s);
+        e.src = p;
+        d.body.appendChild(e);
       })
     }
   }
@@ -48,56 +49,48 @@ export const bundlerRuntimeCode = `
 /** The bundler class for aleph server. */
 export class Bundler {
   #app: Application
-  #bundled: Map<string, string>
+  #chunks: Map<string, { filename: string, async?: boolean }>
   #compiled: Map<string, string>
 
   constructor(app: Application) {
     this.#app = app
-    this.#bundled = new Map()
+    this.#chunks = new Map()
     this.#compiled = new Map()
   }
 
-  async bundle(entryMods: Array<{ url: string, shared: boolean }>) {
-    const remoteEntries = new Set<string>()
-    const sharedEntries = new Set<string>()
-    const entries = new Set<string>()
-
-    entryMods.forEach(({ url, shared }) => {
-      if (shared) {
-        if (util.isLikelyHttpURL(url)) {
-          remoteEntries.add(url)
-        } else {
-          sharedEntries.add(url)
-        }
-      } else {
-        entries.add(url)
-      }
-    })
+  async bundle(entries: DependencyGraph[]) {
+    const vendorDeps = entries.find(({ specifier }) => specifier === 'virtual:/vendor.js')?.deps.map(({ specifier }) => specifier) || []
+    const commonDeps = entries.find(({ specifier }) => specifier === 'virtual:/common.js')?.deps.map(({ specifier }) => specifier) || []
 
     if (this.#app.config.buildTarget !== 'esnext') {
       await this.bundlePolyfillsChunck()
     }
     await this.bundleChunk(
-      'deps',
-      Array.from(remoteEntries),
+      'vendor',
+      vendorDeps,
       []
     )
-    if (sharedEntries.size > 0) {
+    if (commonDeps.length) {
       await this.bundleChunk(
-        'shared',
-        Array.from(sharedEntries),
-        Array.from(remoteEntries)
+        'common',
+        commonDeps,
+        vendorDeps,
       )
     }
-    for (const url of entries) {
-      await this.bundleChunk(
-        trimModuleExt(url),
-        [url],
-        [
-          Array.from(remoteEntries),
-          Array.from(sharedEntries)
-        ].flat()
-      )
+
+    // create page/dynamic chunks
+    for (const { specifier } of entries) {
+      if (!specifier.startsWith('virtual:')) {
+        await this.bundleChunk(
+          trimBuiltinModuleExts(specifier),
+          [specifier],
+          [
+            vendorDeps,
+            commonDeps
+          ].flat(),
+          true
+        )
+      }
     }
 
     // create main.js after all chunks are bundled
@@ -108,13 +101,15 @@ export class Bundler {
     stopEsbuild()
   }
 
-  getBundledFile(name: string): string | null {
-    return this.#bundled.get(name) || null
+  getSyncChunks(): string[] {
+    return Array.from(this.#chunks.values())
+      .filter(chunk => !chunk.async)
+      .map(chunk => chunk.filename)
   }
 
   async copyDist() {
     await Promise.all(
-      Array.from(this.#bundled.values()).map(jsFile => this.copyBundleFile(jsFile))
+      Array.from(this.#chunks.values()).map(({ filename }) => this.copyBundleFile(filename))
     )
   }
 
@@ -127,27 +122,27 @@ export class Bundler {
     await Deno.copyFile(bundleFile, saveAs)
   }
 
-  private async compile(mod: Module, external: string[]): Promise<string> {
-    if (this.#compiled.has(mod.url)) {
-      return this.#compiled.get(mod.url)!
+  private async compile(mod: Module, externals: string[]): Promise<string> {
+    if (this.#compiled.has(mod.specifier)) {
+      return this.#compiled.get(mod.specifier)!
     }
 
     const jsFile = join(this.#app.buildDir, mod.jsFile.slice(0, -3) + '.client.js')
-    this.#compiled.set(mod.url, jsFile)
+    this.#compiled.set(mod.specifier, jsFile)
 
     if (await existsFile(jsFile)) {
       return jsFile
     }
 
-    const source = await this.#app.loadModule(mod.url)
+    const source = await this.#app.loadModuleSource(mod.specifier)
     if (source === null) {
-      this.#compiled.delete(mod.url)
-      throw new Error(`Unsupported module '${mod.url}'`)
+      this.#compiled.delete(mod.specifier)
+      throw new Error(`Unsupported module '${mod.specifier}'`)
     }
 
     try {
       let { code, starExports } = await transform(
-        mod.url,
+        mod.specifier,
         source.code,
         {
           ...this.#app.commonCompileOptions,
@@ -155,25 +150,25 @@ export class Bundler {
             sourceType: source.type,
           },
           bundleMode: true,
-          bundleExternal: external,
+          bundleExternals: externals,
         }
       )
 
       if (starExports && starExports.length > 0) {
         for (let index = 0; index < starExports.length; index++) {
-          const url = starExports[index]
-          const names = await this.#app.parseModuleExportNames(url)
-          code = code.replaceAll(`export * from "[${url}]:`, `export {${names.filter(name => name !== 'default').join(',')}} from "`)
+          const specifier = starExports[index]
+          const names = await this.#app.parseModuleExportNames(specifier)
+          code = code.replaceAll(`export * from "[${specifier}]:`, `export {${names.filter(name => name !== 'default').join(',')}} from "`)
           code = code.replaceAll(`export const $$star_${index}`, `export const {${names.filter(name => name !== 'default').join(',')}}`)
         }
       }
 
       // compile deps
       await Promise.all(mod.deps.map(async dep => {
-        if (!dep.url.startsWith('#') && !external.includes(dep.url)) {
-          const depMod = this.#app.getModule(dep.url)
+        if (!dep.specifier.startsWith('#') && !externals.includes(dep.specifier)) {
+          const depMod = this.#app.getModule(dep.specifier)
           if (depMod !== null) {
-            await this.compile(depMod, external)
+            await this.compile(depMod, externals)
           }
         }
       }))
@@ -181,24 +176,24 @@ export class Bundler {
       await ensureTextFile(jsFile, code)
       return jsFile
     } catch (e) {
-      this.#compiled.delete(mod.url)
-      throw new Error(`Can't compile module '${mod.url}': ${e.message}`)
+      this.#compiled.delete(mod.specifier)
+      throw new Error(`Can't compile module '${mod.specifier}': ${e.message}`)
     }
   }
 
   private async createMainJS() {
-    const bundled = Array.from(this.#bundled.entries())
-      .filter(([name]) => !['polyfills', 'deps', 'shared'].includes(name))
-      .reduce((r, [name, filename]) => {
-        r[name] = filename
+    const asyncChunks = Array.from(this.#chunks.entries())
+      .filter(([_, chunk]) => !!chunk.async)
+      .reduce((r, [name, chunk]) => {
+        r[name] = chunk.filename
         return r
       }, {} as Record<string, string>)
-    const mainJS = `__ALEPH.bundled=${JSON.stringify(bundled)};` + this.#app.getMainJS(true)
+    const mainJS = `__ALEPH.asyncChunks=${JSON.stringify(asyncChunks)};` + this.#app.createMainJS(true)
     const hash = computeHash(mainJS)
     const bundleFilename = `main.bundle.${hash.slice(0, 8)}.js`
     const bundleFilePath = join(this.#app.buildDir, bundleFilename)
     await Deno.writeTextFile(bundleFilePath, mainJS)
-    this.#bundled.set('main', bundleFilename)
+    this.#chunks.set('main', { filename: bundleFilename })
   }
 
   /** create polyfills bundle. */
@@ -213,25 +208,25 @@ export class Bundler {
       const rawPolyfillsFile = `${alephPkgUri}/bundler/polyfills/${polyfillTarget}/mod.ts`
       await this.build(rawPolyfillsFile, bundleFilePath)
     }
-    this.#bundled.set('polyfills', bundleFilename)
+    this.#chunks.set('polyfills', { filename: bundleFilename })
   }
 
   /** create bundle chunk. */
-  private async bundleChunk(name: string, entry: string[], external: string[]) {
-    const entryCode = (await Promise.all(entry.map(async (url, i) => {
+  private async bundleChunk(name: string, entry: string[], external: string[], asyncChunk: boolean = false) {
+    const entryCode = (await Promise.all(entry.map(async (specifier, i) => {
       const { buildDir } = this.#app
-      let mod = this.#app.getModule(url)
+      let mod = this.#app.getModule(specifier)
       if (mod && mod.jsFile !== '') {
         if (external.length === 0) {
           return [
             `import * as mod_${i} from ${JSON.stringify('file://' + join(buildDir, mod.jsFile))}`,
-            `__ALEPH.pack[${JSON.stringify(url)}] = mod_${i}`
+            `__ALEPH.pack[${JSON.stringify(specifier)}] = mod_${i}`
           ]
         } else {
           const jsFile = await this.compile(mod, external)
           return [
             `import * as mod_${i} from ${JSON.stringify('file://' + jsFile)}`,
-            `__ALEPH.pack[${JSON.stringify(url)}] = mod_${i}`
+            `__ALEPH.pack[${JSON.stringify(specifier)}] = mod_${i}`
           ]
         }
       }
@@ -246,7 +241,7 @@ export class Bundler {
       await this.build(bundleEntryFile, bundleFilePath)
       lazyRemove(bundleEntryFile)
     }
-    this.#bundled.set(name, bundleFilename)
+    this.#chunks.set(name, { filename: bundleFilename, async: asyncChunk })
   }
 
   /** run deno bundle and compress the output using terser. */

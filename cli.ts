@@ -1,5 +1,5 @@
-import { resolve } from 'https://deno.land/std@0.96.0/path/mod.ts'
-import { parse } from 'https://deno.land/std@0.96.0/flags/mod.ts'
+import { resolve } from 'https://deno.land/std@0.99.0/path/mod.ts'
+import { parse } from 'https://deno.land/std@0.99.0/flags/mod.ts'
 import { existsDir } from './shared/fs.ts'
 import log, { LevelNames } from './shared/log.ts'
 import util from './shared/util.ts'
@@ -62,7 +62,7 @@ async function main() {
 
   // prints command help message
   if (options.h || options.help) {
-    import(`./cli/${command}.ts`).then(({ helpMessage }) => {
+    import(`./commands/${command}.ts`).then(({ helpMessage }) => {
       console.log(commands[command])
       console.log(helpMessage)
       Deno.exit(0)
@@ -71,7 +71,7 @@ async function main() {
   }
 
   // import command module
-  const { default: cmd } = await import(`./cli/${command}.ts`)
+  const { default: cmd } = await import(`./commands/${command}.ts`)
 
   // execute `init` command
   if (command === 'init') {

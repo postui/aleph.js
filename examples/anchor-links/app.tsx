@@ -3,9 +3,9 @@ import React, { ComponentType } from 'react'
 const links = {
   'Home': '/',
   'About': '/about',
-  'Query 0': '/query',
-  'Query 1': '/query?q=hello',
-  'Query 2': '/query?q=hello&limit=10&offset=20',
+  'Query #0': '/query',
+  'Query #1': '/query?q=hello',
+  'Query #2': '/query?q=hello&limit=10&offset=20',
   'Pink': '/colors/pink',
   'Orange': '/colors/orange',
   'Teal': '/colors/teal',
@@ -28,7 +28,14 @@ export default function App({ Page, pageProps }: { Page: ComponentType<any>, pag
         `}</style>
       </head>
       <nav>
-        {Object.entries(links).map(([name, link]) => <a key={name} href={link} data-active-style={{ fontWeight: 'bold' }}>{name}</a>)}
+        {Object.entries(links).map(([name, link]) => (
+          <a
+            rel="nav"
+            href={link}
+            data-active-style={{ fontWeight: 'bold' }}
+            key={name}
+          >{name}</a>
+        ))}
       </nav>
       <Page {...pageProps} />
     </main>

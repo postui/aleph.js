@@ -58,12 +58,10 @@ p span {
 
 p a {
   margin: 0 9px;
-  color: #777;
+  color: #666;
   text-decoration: none;
-  border-bottom: 1px dashed #ccc;
 }
 
 p a:hover {
-  color: #333;
-  border-bottom-color: transparent;
+  color: #000;
 }

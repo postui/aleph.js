@@ -24,7 +24,7 @@ Deno.test('plugin: markdown loader', async () => {
       'The Full-stack Framework in Deno.'
     ].join('\n')
   )
-  const { code } = await loader.load!({ url: '/pages/docs/index.md', }, app)
+  const { code } = await loader.load!({ specifier: '/pages/docs/index.md', }, app)
   assert(loader.type === 'loader')
   assert(loader.test.test('/test.md'))
   assert(loader.test.test('/test.markdown'))

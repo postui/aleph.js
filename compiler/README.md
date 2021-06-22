@@ -17,9 +17,3 @@ deno run -A build.ts
 ```bash
 cargo test --all
 ```
-
-## Benchmark
-
-```bash
-deno run -A benchmark.ts
-```
