@@ -1,5 +1,5 @@
 import { green, blue } from 'https://deno.land/std@0.96.0/fmt/colors.ts'
-import { join } from "https://deno.land/std/path/mod.ts"
+import { join } from 'https://deno.land/std/path/mod.ts'
 
 export default function (root: string, name: string): boolean {
   const validFiles = [
